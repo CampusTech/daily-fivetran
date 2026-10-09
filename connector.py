@@ -52,6 +52,17 @@ DROP_KEYS = {
 DROP_KEY_PARTS = ("secret", "token", "password", "apikey", "hmac", "credential")
 
 
+# Room config is allowlisted: Daily keeps adding integration settings (hooks,
+# RTMP, SIP, buckets) that can carry URLs or credentials. Feature flags and
+# limits pass; anything new stays out until added here.
+ROOM_CONFIG_PREFIXES = ("enable_", "start_", "max_", "eject_")
+ROOM_CONFIG_KEYS = {
+    "auto_transcription_settings", "permissions", "exp", "nbf", "lang", "geo",
+    "owner_only_broadcast", "experimental_optimize_large_calls", "sfu_switchover",
+    "enforce_unique_user_ids", "allow_room_start", "storage_provider",
+}
+
+
 def _norm(key: str) -> str:
     return key.lower().replace("_", "")
 
@@ -79,6 +90,9 @@ def snake(key: str) -> str:
 
 
 def to_row(obj: dict, domain: str) -> dict:
+    if isinstance(obj.get("config"), dict):
+        obj = {**obj, "config": {k: v for k, v in obj["config"].items()
+                                 if k.startswith(ROOM_CONFIG_PREFIXES) or k in ROOM_CONFIG_KEYS}}
     return {"domain": domain, **{snake(k): v for k, v in sanitize(obj).items()}}
 
 

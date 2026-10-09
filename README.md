@@ -66,6 +66,8 @@ These keys are stripped recursively from every payload before upsert (see `sanit
 - Personal data: `user_name`. `user_id` is kept so you can join to your own users.
 - Room `config.enable_transcription` can hold `deepgram:<api key>`. Only the provider name is kept.
 
+Room `config` is **allowlisted** (`ROOM_CONFIG_PREFIXES` / `ROOM_CONFIG_KEYS`): only feature flags (`enable_*`, `start_*`), limits (`max_*`, `eject_*`), `auto_transcription_settings`, `permissions` and a few scalar settings are kept. New config keys Daily adds are dropped until someone adds them to the allowlist.
+
 The connector never calls:
 
 - domain config (`GET /`), which can hold secrets;

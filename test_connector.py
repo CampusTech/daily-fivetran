@@ -21,7 +21,8 @@ def test_sanitize():
         "enable_transcription": "deepgram:SECRETKEY", "recordings_bucket": {"bucket_name": "b"},
         "max_participants": 10, "meeting_join_hook": "https://h?k=1",
         "streaming_endpoints": [{"name": "yt", "endpoint": "rtmp://x/key"}],
-        "sip": {"display_name": "Bob", "sip_mode": "dial-in"}, "recordings_template": "{room}/x"}}
+        "sip": {"display_name": "Bob", "sip_mode": "dial-in"}, "recordings_template": "{room}/x",
+        "some_future_integration": {"uri": "x"}}}
     assert c.to_row(room, "d") == {"domain": "d", "name": "Labc", "config": {"enable_transcription": "deepgram", "max_participants": 10}}
     assert c.to_row({"user_id": "u", "user_name": "Alice", "participant_id": "p"}, "d") == {"domain": "d", "user_id": "u", "participant_id": "p"}
 
