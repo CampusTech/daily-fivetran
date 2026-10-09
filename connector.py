@@ -33,9 +33,11 @@ DEFAULT_START_DATE = "2025-01-01"
 PACE_SECONDS = {"/rooms": 0.1}
 DEFAULT_PACE_SECONDS = 0.65
 
-MEETING_WINDOW_MIN = 300
-MEETING_WINDOW_START = 3600
-MEETING_WINDOW_MAX = 86400
+# /meetings takes ~50 s per page on large domains and times out on any
+# timeframe filter, so it is walked newest-first like recordings. Meetings only
+# change while ongoing: re-read 2 h, or back to the oldest meeting that was
+# still ongoing last run (capped at LOOKBACK_SECONDS).
+MEETINGS_LOOKBACK_SECONDS = 2 * 3600
 
 # Keys dropped anywhere in a payload, compared lowercased with "_" removed.
 # s3key/outparams/bucket/output: storage paths. share_token/url: access.
@@ -134,7 +136,7 @@ class DailyClient:
             self.last_call = time.monotonic()
             backoff = min(2 ** attempt, 60)
             try:
-                resp = self.session.get(f"{DAILY_API_BASE}{path}", params=params, timeout=60)
+                resp = self.session.get(f"{DAILY_API_BASE}{path}", params=params, timeout=180)
             except (requests.Timeout, requests.ConnectionError) as e:
                 if attempt == max_tries - 1:
                     raise
@@ -269,17 +271,36 @@ def sync_full(client: DailyClient, path: str, table: str):
     log.info(f"{table}: {n} rows")
 
 
+def write_row(table: str, obj: dict, domain: str):
+    op.upsert(table, to_row(obj, domain))
+
+
+def write_meeting(table: str, obj: dict, domain: str):
+    participants = obj.pop("participants", None) or []
+    op.upsert(table, to_row(obj, domain))
+    for p in participants:
+        op.upsert("meeting_participants", {"meeting_id": obj["id"], **to_row(p, domain)})
+
+
 def sync_newest_first(client: DailyClient, state: dict, path: str, table: str,
-                      id_key: str, ts_key: str, start_epoch: float):
-    """Walk a newest-first list until rows are older than cursor - lookback.
+                      id_key: str, ts_key: str, start_epoch: float,
+                      lookback: float = LOOKBACK_SECONDS, write=write_row):
+    """Walk a newest-first list until rows are older than the floor.
 
     No server-side "updated since" filter exists, so this is the incremental
-    strategy. A partial walk is resumable via state[f"{table}_resume"].
+    strategy. Floor = cursor - lookback, extended back to the oldest row that
+    was `ongoing` last run (capped at LOOKBACK_SECONDS). A partial walk is
+    resumable via state[f"{table}_resume"].
     """
     cursor = state.get(f"{table}_cursor")
-    floor = cursor - LOOKBACK_SECONDS if cursor else start_epoch
+    floor = start_epoch
+    if cursor:
+        floor = cursor - lookback
+        if state.get(f"{table}_open_min"):
+            floor = max(min(floor, state[f"{table}_open_min"]), cursor - LOOKBACK_SECONDS)
     resume = state.get(f"{table}_resume") or {}
     max_ts = resume.get("max_ts", cursor or 0)
+    open_min = resume.get("open_min")
     params = {"starting_after": resume["starting_after"]} if resume.get("starting_after") else {}
 
     n = 0
@@ -290,64 +311,57 @@ def sync_newest_first(client: DailyClient, state: dict, path: str, table: str,
             if ts is not None and ts < floor:
                 done = True
                 break
-            op.upsert(table, to_row(obj, client.domain))
+            if obj.get("ongoing") and ts is not None:
+                open_min = min(open_min or ts, ts)
+            write(table, obj, client.domain)
             n += 1
             if ts is not None:
                 max_ts = max(max_ts, ts)
         if done:
             break
-        state[f"{table}_resume"] = {"starting_after": page[-1][id_key], "max_ts": max_ts}
+        state[f"{table}_resume"] = {"starting_after": page[-1][id_key], "max_ts": max_ts, "open_min": open_min}
         op.checkpoint(state)
 
     # ponytail: if the resume row was deleted upstream the walk may end early and
     # skip older rows; a full resync (clear state) recovers.
     state.pop(f"{table}_resume", None)
+    state[f"{table}_open_min"] = open_min
     if max_ts:
         state[f"{table}_cursor"] = max_ts
     op.checkpoint(state)
     log.info(f"{table}: {n} rows, cursor={max_ts}")
 
 
-def sync_meetings(client: DailyClient, state: dict, start_epoch: float):
-    """Forward time windows over /meetings; shrink the window on 504s/timeouts."""
-    cursor = state.get("meetings_cursor")
-    window_start = int(cursor - LOOKBACK_SECONDS if cursor else start_epoch)
-    window = MEETING_WINDOW_START
-    ceiling, clean = MEETING_WINDOW_MAX, 0  # don't regrow into a window that just 504'd
-    now = int(time.time())
+def sync_batch_jobs(client: DailyClient, state: dict, recheck_pages: int = 5):
+    """Batch jobs have no timestamps: walk newest-first until `recheck_pages`
+    pages past the newest job seen last run (re-reading those catches status
+    changes on recent jobs). Resumable like sync_newest_first."""
+    table = "batch_processor_jobs"
+    last_newest = state.get(f"{table}_newest")
+    resume = state.get(f"{table}_resume") or {}
+    newest, left = resume.get("newest"), resume.get("left")
+    params = {"starting_after": resume["starting_after"]} if resume.get("starting_after") else {}
+
     n = 0
-
-    while window_start < now:
-        window_end = min(window_start + window, now)
-        params = {"timeframe_start": window_start, "timeframe_end": window_end}
-        try:
-            meetings = [m for page in client.pages("/meetings", params, max_tries=3) for m in page]
-        except (requests.HTTPError, requests.Timeout, requests.ConnectionError) as e:
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            if (status is not None and status < 500) or window <= MEETING_WINDOW_MIN:
-                raise
-            ceiling, clean = window, 0
-            window = max(window // 2, MEETING_WINDOW_MIN)
-            log.warning(f"/meetings {window_start}-{window_end} failed ({e}); window -> {window}s")
-            continue
-
-        for m in meetings:
-            participants = m.pop("participants", None) or []
-            op.upsert("meetings", to_row(m, client.domain))
-            for p in participants:
-                op.upsert("meeting_participants", {"meeting_id": m["id"], **to_row(p, client.domain)})
-        n += len(meetings)
-
-        window_start = window_end
-        state["meetings_cursor"] = window_end
+    for page in client.pages("/batch-processor", params):
+        newest = newest or page[0]["id"]
+        for obj in page:
+            write_row(table, obj, client.domain)
+        n += len(page)
+        if left is None and any(o["id"] == last_newest for o in page):
+            left = recheck_pages
+        if left is not None:
+            left -= 1
+            if left <= 0:
+                break
+        state[f"{table}_resume"] = {"starting_after": page[-1]["id"], "newest": newest, "left": left}
         op.checkpoint(state)
-        clean += 1
-        if clean >= 24:
-            ceiling = MEETING_WINDOW_MAX
-        if len(meetings) < PAGE_SIZE and window * 2 < ceiling:
-            window *= 2
 
-    log.info(f"meetings: {n} rows, cursor={state.get('meetings_cursor')}")
+    state.pop(f"{table}_resume", None)
+    if newest:
+        state[f"{table}_newest"] = newest
+    op.checkpoint(state)
+    log.info(f"{table}: {n} rows")
 
 
 def update(configuration: dict, state: dict):
@@ -369,10 +383,10 @@ def update(configuration: dict, state: dict):
 
     sync_newest_first(client, state, "/recordings", "recordings", "id", "start_ts", start_epoch)
     sync_newest_first(client, state, "/transcript", "transcripts", "transcriptId", "created_at", start_epoch)
-    sync_meetings(client, state, start_epoch)
-
-    sync_full(client, "/batch-processor", "batch_processor_jobs")
-    op.checkpoint(state)
+    sync_batch_jobs(client, state)
+    # Last: the initial backfill takes days; checkpoints resume it next sync.
+    sync_newest_first(client, state, "/meetings", "meetings", "id", "start_time", start_epoch,
+                      lookback=MEETINGS_LOOKBACK_SECONDS, write=write_meeting)
 
 
 connector = Connector(update=update, schema=schema)

@@ -11,13 +11,13 @@ It syncs **metadata only**: no recording media, transcript text, download links,
 | `rooms` | `GET /rooms` | `id` | Full refresh, at most once per 24h |
 | `recordings` | `GET /recordings` | `id` | Incremental: newest-first walk, stops at `start_ts < cursor - 3 days` |
 | `transcripts` | `GET /transcript` | `transcript_id` | Incremental: newest-first walk, stops at `created_at < cursor - 3 days` |
-| `meetings` | `GET /meetings` | `id` | Incremental: forward `timeframe_start`/`timeframe_end` windows from `cursor - 3 days` |
+| `meetings` | `GET /meetings` | `id` | Incremental: newest-first walk, stops at `start_time < cursor - 2 h`, or earlier to cover meetings still ongoing last run |
 | `meeting_participants` | `participants` inline in `GET /meetings` | `meeting_id`, `participant_id` | With `meetings` |
-| `batch_processor_jobs` | `GET /batch-processor` | `id` | Full refresh |
+| `batch_processor_jobs` | `GET /batch-processor` | `id` | Incremental: newest-first walk until 5 pages past the newest job seen last run. Jobs have no timestamps, and the re-read pages catch status changes. |
 
 Every row has a `domain` column. Field names are snake_cased (`mtgSessionId` becomes `mtg_session_id`). Unlisted API fields flow through, and Fivetran infers their types.
 
-The 3-day lookback re-reads in-progress recordings, transcripts and meetings, whose `status` and `duration` change after they're first seen. Upserts make reruns idempotent.
+The lookback re-reads in-progress recordings, transcripts and meetings, whose `status` and `duration` change after they're first seen. Upserts make reruns idempotent.
 
 ## Configuration
 
@@ -55,7 +55,11 @@ Daily allows about 50 requests per 30 s on data endpoints (recordings, transcrip
 - Timeouts and 5xx responses retry with exponential backoff.
 - A 429 honours `Retry-After`, whether it's given in seconds or as an HTTP-date.
 
-`/meetings` can return 504 on busy domains for wide time ranges. Windows start at 1 h and double after quiet windows, up to 24 h. On repeated failures they halve, down to 5 min. After a 504, the connector won't grow back to the failing width until 24 clean windows have passed.
+`/meetings` is slow on large domains: about 50 s per 100-row page, and any `timeframe_start`/`timeframe_end` filter can time out. So meetings are walked newest-first with no filter, and the request timeout is 180 s.
+
+- Meetings only change while `ongoing`. Each run re-reads the last 2 h, or back to the oldest meeting that was still ongoing last run, capped at 3 days.
+- Meetings sync last, so the other tables land first each run.
+- The first backfill is slow: about 5,000 pages, or ~70 h, for a domain with 500k meetings. It saves progress every page and resumes on the next sync. Set `start_date` to bound it.
 
 ## Data handling
 

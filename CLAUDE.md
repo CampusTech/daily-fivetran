@@ -15,11 +15,13 @@ Fivetran Connector SDK connector for the Daily.co REST API. README.md covers tab
 - New fields must pass through `sanitize()`. If a new endpoint returns storage paths, links, names or secrets, add the key to `DROP_KEYS` and a case to `test_sanitize`.
 - Room `config` is allowlisted. Only add a key to `ROOM_CONFIG_KEYS` after confirming it can't hold URLs, paths or credentials.
 - Data endpoints are rate limited to about 50 requests per 30 s. Don't lower `DEFAULT_PACE_SECONDS` without checking Daily's current rate-limit docs.
+- `/meetings` takes ~50 s per page and times out with timeframe filters. Don't add them back.
 - Changing a primary key requires a full resync of the destination table.
 - State keys:
   - `{table}_cursor`: epoch seconds.
   - `{table}_resume`: a mid-walk resume point.
-  - `meetings_cursor`: end of the last finished window.
+  - `{table}_open_min`: oldest `start_time` still `ongoing` last run (meetings), which extends the next floor.
+  - `batch_processor_jobs_newest`: newest job id seen; the next walk stops 5 pages past it.
   - `rooms_synced_at`: time of the last rooms refresh.
 
   Clearing state triggers a full backfill from `start_date`.

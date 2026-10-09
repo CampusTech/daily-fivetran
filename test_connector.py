@@ -2,7 +2,6 @@
 
 from unittest import mock
 
-import requests
 
 import connector as c
 
@@ -35,23 +34,16 @@ def test_retry_after():
 
 
 class FakeClient:
-    """Serves newest-first rows 100 per page; can 504 /meetings for wide windows."""
+    """Serves newest-first rows 100 per page."""
 
-    def __init__(self, rows=None, meetings_max_window=None):
+    def __init__(self, rows=None):
         self.rows = rows or []
-        self.meetings_max_window = meetings_max_window
         self.calls = []
         self.domain = "d"
 
     def pages(self, path, params=None, id_key="id", max_tries=6):
         params = params or {}
         self.calls.append((path, dict(params)))
-        if path == "/meetings":
-            if self.meetings_max_window and params["timeframe_end"] - params["timeframe_start"] > self.meetings_max_window:
-                resp = requests.Response()
-                resp.status_code = 504
-                raise requests.HTTPError(response=resp)
-            return iter([])
         rows = self.rows
         if params.get("starting_after"):
             i = [r[id_key] for r in rows].index(params["starting_after"])
@@ -89,15 +81,41 @@ def test_newest_first_stops_at_lookback():
     assert state["recordings_cursor"] == now
 
 
-def test_meetings_window_shrinks_on_504():
-    start = 1_800_000_000
-    client = FakeClient(meetings_max_window=600)
+def test_meetings_floor_follows_ongoing():
+    now = 1_800_000_000
+    # newest first, every 10 min; the one 5 h old is still ongoing
+    rows = [{"id": f"m{i}", "start_time": now - i * 600, "ongoing": i == 30,
+             "participants": [{"participant_id": f"p{i}", "user_id": "u", "user_name": "X"}]}
+            for i in range(200)]
+    state = {"meetings_cursor": now - 600}
+    out = run(c.sync_newest_first, FakeClient(rows), state, "/meetings", "meetings", "id", "start_time", 0,
+              c.MEETINGS_LOOKBACK_SECONDS, c.write_meeting)
+    meetings = [d for t, d in out if t == "meetings"]
+    parts = [d for t, d in out if t == "meeting_participants"]
+    assert len(meetings) == 14  # floor = cursor - 2 h -> rows 0..13
+    assert parts[0] == {"meeting_id": "m0", "domain": "d", "participant_id": "p0", "user_id": "u"}
+    assert state["meetings_open_min"] is None
+
+    # last run saw m30 ongoing -> floor extends back to it
+    rows = [dict(r, participants=[]) for r in rows]
+    state = {"meetings_cursor": now - 600, "meetings_open_min": now - 30 * 600}
+    out = run(c.sync_newest_first, FakeClient(rows), state, "/meetings", "meetings", "id", "start_time", 0,
+              c.MEETINGS_LOOKBACK_SECONDS, c.write_meeting)
+    assert len(out) == 31
+    assert state["meetings_open_min"] == now - 30 * 600
+
+
+def test_batch_jobs_stop_after_known():
+    rows = [{"id": f"j{i}", "preset": "p", "status": "finished"} for i in range(1000)]
     state = {}
-    with mock.patch.object(c.time, "time", lambda: start + 7200):
-        run(c.sync_meetings, client, state, start)
-    widths = [p["timeframe_end"] - p["timeframe_start"] for _, p in client.calls]
-    assert widths[:4] == [3600, 1800, 900, 450], widths
-    assert state["meetings_cursor"] == start + 7200
+    out = run(c.sync_batch_jobs, FakeClient(rows), state, 2)
+    assert len(out) == 1000 and state["batch_processor_jobs_newest"] == "j0"
+
+    rows = [{"id": f"n{i}", "status": "submitted"} for i in range(150)] + rows  # 150 new jobs
+    out = run(c.sync_batch_jobs, FakeClient(rows), state, 2)
+    # known j0 is on page 2 -> read page 2 and one more
+    assert len(out) == 300, len(out)
+    assert state["batch_processor_jobs_newest"] == "n0" and "batch_processor_jobs_resume" not in state
 
 
 if __name__ == "__main__":
