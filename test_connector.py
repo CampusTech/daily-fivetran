@@ -19,7 +19,9 @@ def test_sanitize():
     assert c.to_row(t, "d") == {"domain": "d", "transcript_id": "t1", "is_vtt_available": True, "participant_minutes": 4.5}
     room = {"name": "Labc", "url": "https://x", "config": {
         "enable_transcription": "deepgram:SECRETKEY", "recordings_bucket": {"bucket_name": "b"},
-        "max_participants": 10}}
+        "max_participants": 10, "meeting_join_hook": "https://h?k=1",
+        "streaming_endpoints": [{"name": "yt", "endpoint": "rtmp://x/key"}],
+        "sip": {"display_name": "Bob", "sip_mode": "dial-in"}, "recordings_template": "{room}/x"}}
     assert c.to_row(room, "d") == {"domain": "d", "name": "Labc", "config": {"enable_transcription": "deepgram", "max_participants": 10}}
     assert c.to_row({"user_id": "u", "user_name": "Alice", "participant_id": "p"}, "d") == {"domain": "d", "user_id": "u", "participant_id": "p"}
 

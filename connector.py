@@ -43,7 +43,11 @@ MEETING_WINDOW_MAX = 86400
 DROP_KEYS = {
     "s3key", "sharetoken", "outparams", "username", "url", "output",
     "recordingsbucket", "transcriptionbucket", "s3config", "bucket",
-    "accesslink", "downloadlink",
+    "accesslink", "downloadlink", "assumerolearn",
+    "recordingstemplate", "transcriptiontemplate",
+    # room config: webhook URL, RTMP endpoints (stream keys), SIP/dial-in
+    "meetingjoinhook", "streamingendpoints", "endpoint", "extraendpoints",
+    "sip", "sipuri", "dialinconfig", "dialoutconfig", "displayname",
 }
 DROP_KEY_PARTS = ("secret", "token", "password", "apikey", "hmac", "credential")
 

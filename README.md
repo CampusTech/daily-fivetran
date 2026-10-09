@@ -61,8 +61,8 @@ Daily allows about 50 requests per 30 s on data endpoints (recordings, transcrip
 
 These keys are stripped recursively from every payload before upsert (see `sanitize()` in `connector.py`):
 
-- Storage paths: `s3key`, `outParams`, `bucket`, `recordings_bucket`, `transcription_bucket`, `s3Config`, batch-job `output`.
-- Access: `share_token`, `url`, access/download links, and any key containing `token`, `secret`, `password`, `apikey`, `hmac` or `credential`.
+- Storage paths: `s3key`, `outParams`, `bucket`, `recordings_bucket`, `transcription_bucket`, `s3Config`, `recordings_template`, `transcription_template`, batch-job `output`.
+- Access: `share_token`, `url`, room `meeting_join_hook`, `streaming_endpoints`, SIP/dial-in config, access/download links, and any key containing `token`, `secret`, `password`, `apikey`, `hmac` or `credential`.
 - Personal data: `user_name`. `user_id` is kept so you can join to your own users.
 - Room `config.enable_transcription` can hold `deepgram:<api key>`. Only the provider name is kept.
 
