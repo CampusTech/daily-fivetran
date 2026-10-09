@@ -1,0 +1,9 @@
+configuration.json
+venv/
+.venv/
+__pycache__/
+files/
+*.db
+.DS_Store
+DAILY-FIVETRAN-CONNECTOR-HANDOFF.md
+.claude/settings.local.json

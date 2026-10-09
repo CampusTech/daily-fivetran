@@ -1,0 +1,5 @@
+{
+  "api_key": "<daily REST API key>",
+  "domain": "<daily subdomain, e.g. mycompany for mycompany.daily.co>",
+  "start_date": "2025-01-01"
+}
