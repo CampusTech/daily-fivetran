@@ -46,8 +46,8 @@ python connector.py                                # full sync into files/wareho
 
 `.github/workflows/deploy.yml` runs the offline tests, then `fivetran deploy` on every push to `main`. It needs these settings:
 
-- Secrets: `DAILY_API_KEY`, `DAILY_DOMAIN`, `FIVETRAN_API_KEY` (base64), `FIVETRAN_DESTINATION`, `FIVETRAN_CONNECTION` (the destination schema name).
-- Optional variable: `DAILY_START_DATE`.
+- Secrets: `DAILY_API_KEY`, `FIVETRAN_API_KEY` (base64 of `key:secret`).
+- Variables: `DAILY_DOMAIN`, `FIVETRAN_DESTINATION`, `FIVETRAN_CONNECTION` (the destination schema name), and optionally `DAILY_START_DATE`.
 
 ## Rate limits and retries
 

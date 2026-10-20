@@ -37,18 +37,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install fivetran-connector-sdk
           pip install -r requirements.txt
+      - name: Check required settings
+        env:
+          DAILY_API_KEY: ${{ secrets.DAILY_API_KEY }}
+          FIVETRAN_API_KEY: ${{ secrets.FIVETRAN_API_KEY }}
+          DAILY_DOMAIN: ${{ vars.DAILY_DOMAIN }}
+          FIVETRAN_DESTINATION: ${{ vars.FIVETRAN_DESTINATION }}
+          FIVETRAN_CONNECTION: ${{ vars.FIVETRAN_CONNECTION }}
+        run: |
+          missing=0
+          for v in DAILY_API_KEY FIVETRAN_API_KEY DAILY_DOMAIN FIVETRAN_DESTINATION FIVETRAN_CONNECTION; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set"; missing=1; fi
+          done
+          exit $missing
       - name: Create configuration file
         env:
           DAILY_API_KEY: ${{ secrets.DAILY_API_KEY }}
-          DAILY_DOMAIN: ${{ secrets.DAILY_DOMAIN }}
+          DAILY_DOMAIN: ${{ vars.DAILY_DOMAIN }}
           DAILY_START_DATE: ${{ vars.DAILY_START_DATE }}
         run: |
           python -c 'import json, os; json.dump({"api_key": os.environ["DAILY_API_KEY"], "domain": os.environ["DAILY_DOMAIN"], "start_date": os.environ.get("DAILY_START_DATE") or "2025-01-01"}, open("configuration.json", "w"))'
       - name: Deploy to Fivetran
         env:
           FIVETRAN_API_KEY: ${{ secrets.FIVETRAN_API_KEY }}
-          FIVETRAN_DESTINATION: ${{ secrets.FIVETRAN_DESTINATION }}
-          FIVETRAN_CONNECTION: ${{ secrets.FIVETRAN_CONNECTION }}
+          FIVETRAN_DESTINATION: ${{ vars.FIVETRAN_DESTINATION }}
+          FIVETRAN_CONNECTION: ${{ vars.FIVETRAN_CONNECTION }}
         run: |
           fivetran deploy \
             --api-key "$FIVETRAN_API_KEY" \
