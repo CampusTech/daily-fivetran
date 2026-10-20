@@ -63,9 +63,12 @@ jobs:
           FIVETRAN_DESTINATION: ${{ vars.FIVETRAN_DESTINATION }}
           FIVETRAN_CONNECTION: ${{ vars.FIVETRAN_CONNECTION }}
         run: |
+          # the CLI echoes the key's first 8 chars; GitHub only masks the full secret
+          echo "::add-mask::${FIVETRAN_API_KEY:0:8}"
           fivetran deploy \
             --api-key "$FIVETRAN_API_KEY" \
             --destination "$FIVETRAN_DESTINATION" \
             --connection "$FIVETRAN_CONNECTION" \
             --configuration configuration.json \
-            --python 3.12
+            --python 3.12 \
+            --yes
