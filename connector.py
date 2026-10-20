@@ -33,11 +33,16 @@ DEFAULT_START_DATE = "2025-01-01"
 PACE_SECONDS = {"/rooms": 0.1}
 DEFAULT_PACE_SECONDS = 0.65
 
-# /meetings takes ~50 s per page on large domains and times out on any
-# timeframe filter, so it is walked newest-first like recordings. Meetings only
-# change while ongoing: re-read 2 h, or back to the oldest meeting that was
-# still ongoing last run (capped at LOOKBACK_SECONDS).
+# /meetings takes ~50 s per page unfiltered on large domains. Daily's
+# undocumented `lookback_days` (with `timeframe_start`) bounds how far back it
+# scans for meeting starts and makes recent windows ~5 s/page, but windows
+# months old still time out. So the initial backfill walks unfiltered
+# newest-first, and incremental runs filter on timeframe_start >= floor.
+# lookback_days must exceed the domain's longest meeting (Daily support).
+# Meetings only change while ongoing: re-read 2 h, or back to the oldest
+# meeting still ongoing last run (capped at LOOKBACK_SECONDS).
 MEETINGS_LOOKBACK_SECONDS = 2 * 3600
+DEFAULT_MEETINGS_LOOKBACK_DAYS = "15"
 
 # Keys dropped anywhere in a payload, compared lowercased with "_" removed.
 # s3key/outparams/bucket/output: storage paths. share_token/url: access.
@@ -284,7 +289,8 @@ def write_meeting(table: str, obj: dict, domain: str):
 
 def sync_newest_first(client: DailyClient, state: dict, path: str, table: str,
                       id_key: str, ts_key: str, start_epoch: float,
-                      lookback: float = LOOKBACK_SECONDS, write=write_row):
+                      lookback: float = LOOKBACK_SECONDS, write=write_row,
+                      incremental_params=None):
     """Walk a newest-first list until rows are older than the floor.
 
     No server-side "updated since" filter exists, so this is the incremental
@@ -302,6 +308,8 @@ def sync_newest_first(client: DailyClient, state: dict, path: str, table: str,
     max_ts = resume.get("max_ts", cursor or 0)
     open_min = resume.get("open_min")
     params = {"starting_after": resume["starting_after"]} if resume.get("starting_after") else {}
+    if cursor and incremental_params:
+        params.update(incremental_params(floor))
 
     n = 0
     done = False
@@ -371,6 +379,7 @@ def update(configuration: dict, state: dict):
         raise ValueError("Missing required configuration: api_key and domain")
     start_date = configuration.get("start_date") or DEFAULT_START_DATE
     start_epoch = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc).timestamp()
+    meetings_lookback_days = configuration.get("meetings_lookback_days") or DEFAULT_MEETINGS_LOOKBACK_DAYS
 
     client = DailyClient(api_key, domain)
     check_domain(client)
@@ -386,7 +395,9 @@ def update(configuration: dict, state: dict):
     sync_batch_jobs(client, state)
     # Last: the initial backfill takes days; checkpoints resume it next sync.
     sync_newest_first(client, state, "/meetings", "meetings", "id", "start_time", start_epoch,
-                      lookback=MEETINGS_LOOKBACK_SECONDS, write=write_meeting)
+                      lookback=MEETINGS_LOOKBACK_SECONDS, write=write_meeting,
+                      incremental_params=lambda floor: {"timeframe_start": int(floor),
+                                                        "lookback_days": meetings_lookback_days})
 
 
 connector = Connector(update=update, schema=schema)

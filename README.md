@@ -28,6 +28,7 @@ The lookback re-reads in-progress recordings, transcripts and meetings, whose `s
 | `api_key` | yes | Daily REST API key |
 | `domain` | yes | Daily subdomain the key belongs to (`acme` for `acme.daily.co`). The sync fails if the key belongs to a different domain. |
 | `start_date` | no | First-sync backfill start, `YYYY-MM-DD`. Default `2025-01-01`. |
+| `meetings_lookback_days` | no | Daily's undocumented `/meetings` `lookback_days`, used on incremental runs. It must be longer than your longest meeting. Default `15`. |
 
 Daily API keys are per-domain. To sync several domains, deploy one connection per domain, each with its own `api_key` and `domain`.
 
@@ -55,7 +56,10 @@ Daily allows about 50 requests per 30 s on data endpoints (recordings, transcrip
 - Timeouts and 5xx responses retry with exponential backoff.
 - A 429 honours `Retry-After`, whether it's given in seconds or as an HTTP-date.
 
-`/meetings` is slow on large domains: about 50 s per 100-row page, and any `timeframe_start`/`timeframe_end` filter can time out. So meetings are walked newest-first with no filter, and the request timeout is 180 s.
+`/meetings` is slow on large domains: about 50 s per 100-row page unfiltered, sometimes a 504. Daily support provided an undocumented `lookback_days` parameter, used together with `timeframe_start`, that limits how far back Daily searches for meeting starts. It makes recent windows about 5 s per page, but windows months old still time out.
+
+- The initial backfill walks newest-first with no filter. The request timeout is 180 s.
+- Incremental runs, after the backfill, send `timeframe_start=<floor>&lookback_days=<meetings_lookback_days>`. An hourly run takes about 20 s.
 
 - Meetings only change while `ongoing`. Each run re-reads the last 2 h, or back to the oldest meeting that was still ongoing last run, capped at 3 days.
 - Meetings sync last, so the other tables land first each run.

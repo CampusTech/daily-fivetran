@@ -118,6 +118,21 @@ def test_batch_jobs_stop_after_known():
     assert state["batch_processor_jobs_newest"] == "n0" and "batch_processor_jobs_resume" not in state
 
 
+def test_meetings_incremental_params_only_after_backfill():
+    rows = [{"id": f"m{i}", "start_time": 1_800_000_000 - i * 600, "participants": []} for i in range(50)]
+    params = lambda floor: {"timeframe_start": int(floor), "lookback_days": "15"}
+    client = FakeClient(rows)
+    run(c.sync_newest_first, client, {}, "/meetings", "meetings", "id", "start_time", 0,
+        c.MEETINGS_LOOKBACK_SECONDS, c.write_meeting, params)
+    assert client.calls[0][1] == {}  # backfill: unfiltered
+
+    client = FakeClient(rows)
+    state = {"meetings_cursor": 1_800_000_000}
+    run(c.sync_newest_first, client, state, "/meetings", "meetings", "id", "start_time", 0,
+        c.MEETINGS_LOOKBACK_SECONDS, c.write_meeting, params)
+    assert client.calls[0][1] == {"timeframe_start": 1_800_000_000 - 7200, "lookback_days": "15"}
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
